@@ -26,12 +26,11 @@ app_mode = st.selectbox(
 
 # 精准查询单个英文单词音标（双接口容错）
 def get_single_word_phonetic(word):
-    # 正确清理非英文字母字符
     clean_w = re.sub(r'[^a-zA-Z]', '', word).strip().lower()
     if not clean_w:
         return ""
     
-    # 尝试接口 1: Free Dictionary API
+    # 接口 1: Free Dictionary API
     try:
         dict_res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{clean_w}", timeout=3)
         if dict_res.status_code == 200:
@@ -47,7 +46,7 @@ def get_single_word_phonetic(word):
     except Exception:
         pass
 
-    # 尝试接口 2: Datamuse API (备用)
+    # 接口 2: Datamuse API (备用)
     try:
         dm_res = requests.get(f"https://api.datamuse.com/words?sp={clean_w}&qe=sp&md=r&ipa=1", timeout=3)
         if dm_res.status_code == 200:
@@ -61,26 +60,27 @@ def get_single_word_phonetic(word):
 
     return ""
 
-# 提取英文文本中的音标（支持单词和短语）
+# 提取英文文本中每一个单词的完整音标序列
 def get_text_phonetics(text):
-    # 提取所有英文单词
-    words = re.findall(r'[a-zA-Z]+', text)
+    words = re.findall(r"[a-zA-Z']+", text)
     if not words:
         return ""
     
-    # 如果是单个词
+    # 单个单词处理
     if len(words) == 1:
         p = get_single_word_phonetic(words[0])
         return p if p else ""
     
-    # 如果是短语，查询前 3 个核心词的音标组合
+    # 针对整句话：逐词查询并拼接到列表中，不漏掉任何单词
     results = []
-    for w in words[:3]:
+    for w in words:
         p = get_single_word_phonetic(w)
         if p:
             results.append(f"{w} {p}")
+        else:
+            results.append(f"{w}") # 如果个别小词查不到音标，保留单词本身
             
-    return " | ".join(results) if results else ""
+    return "  ".join(results)
 
 # 查词/翻译核心逻辑
 def get_translation_and_phonetic(query, langpair="en|zh-CN"):
@@ -99,15 +99,13 @@ def get_translation_and_phonetic(query, langpair="en|zh-CN"):
 
     # 2. 获取英文部分的音标
     if langpair.startswith("en"):
-        # 英译中：获取输入英文的音标
         phonetic = get_text_phonetics(query)
     else:
-        # 中译英：获取翻译出来的英文音标
         phonetic = get_text_phonetics(translation) if translation != "翻译服务暂时不可用" else ""
 
     return phonetic, translation
 
-# 渲染卡片与保存
+# 三行清晰渲染展示（一行英文，一行音标，一行发音）
 def display_result_and_save(query, phonetic, translation, is_english_input=True):
     st.markdown("---")
     st.subheader("查词 / 翻译结果")
@@ -117,22 +115,23 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
         
         if is_english_input:
             # 英译中
-            st.write(f"### {query}")
-            st.info(f"🔊 音标：**{p_text}**")
-            st.write(f"**中文释义：** {translation}")
+            st.markdown(f"**【英文原文】**\n### {query}")
+            st.markdown(f"**【对应音标】**\n`{p_text}`")
+            st.write(f"**【中文释义】** {translation}")
             tts_word = query
             save_word = query
             save_trans = translation
         else:
             # 中译英
-            st.write(f"### 英文翻译：{translation}")
-            st.info(f"🔊 英文音标：**{p_text}**")
-            st.write(f"**中文原文：** {query}")
+            st.markdown(f"**【中文原文】** {query}")
+            st.markdown(f"**【英文翻译】**\n### {translation}")
+            st.markdown(f"**【对应音标】**\n`{p_text}`")
             tts_word = translation
             save_word = translation
             save_trans = query
 
-        # 发音组件（Google TTS 朗读）
+        # 一行展示语音播放
+        st.markdown("**【语音发音】**")
         audio_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={tts_word}&tl=en&client=tw-ob"
         st.audio(audio_url, format="audio/mp3")
 
@@ -213,8 +212,9 @@ if not st.session_state.vocab_list:
     st.info("暂无生词，快在上方查询并添加吧！")
 else:
     for idx, item in enumerate(list(st.session_state.vocab_list)):
-        with st.expander(f"📌 {item['word']}  [{item['phonetic']}]"):
-            st.write(f"**释义：** {item['translation']}")
+        with st.expander(f"📌 {item['word']}"):
+            st.markdown(f"**【音标】** `{item['phonetic']}`")
+            st.write(f"**【释义】** {item['translation']}")
             st.audio(f"https://translate.google.com/translate_tts?ie=UTF-8&q={item['word']}&tl=en&client=tw-ob", format="audio/mp3")
             
             if st.button("删除", key=f"del_{idx}_{item['word']}"):
