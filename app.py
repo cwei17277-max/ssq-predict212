@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
-from paddleocr import PaddleOCR
-import speech_recognition as sr
+import json
 from io import BytesIO
 import PIL.Image as Image
 
@@ -13,24 +12,16 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 初始化 OCR 模型
-@st.cache_resource
-def load_ocr_model():
-    return PaddleOCR(use_angle_cls=True, lang="ch")
-
-ocr_model = load_ocr_model()
-r = sr.Recognizer()
-
-# 初始化生词本
+# 初始化 Session 生词本
 if "vocab_list" not in st.session_state:
     st.session_state.vocab_list = []
 
 st.title("🤖 AI 随身英语全能助手")
 
-# 1. 功能选择
-app_mode = st.selectbox("选择功能", ["手动查词/翻译", "📷 拍照识字/翻译", "🎙️ 语音输入(中->英)"])
+# 功能选择
+app_mode = st.selectbox("选择功能", ["手动查词/翻译", "📷 拍照识字/翻译"])
 
-# 通用翻译函数
+# 查词/翻译核心函数
 def get_translation_and_phonetic(query, langpair="en|zh-CN"):
     is_single_word = len(query.split()) == 1 and "|" not in langpair
     phonetic = ""
@@ -62,24 +53,23 @@ def get_translation_and_phonetic(query, langpair="en|zh-CN"):
 
     return phonetic, translation, is_single_word
 
-# 纯原生 Streamlit 渲染结果卡片（防止 DOM removeChild 报错）
+# 渲染结果与保存逻辑
 def display_result_and_save(query, phonetic, translation, is_single_word, is_english_input=True):
     display_phonetic = phonetic if phonetic else ("/暂无音标/" if is_single_word else "")
     
     st.markdown("---")
     st.subheader("查词 / 翻译结果")
     
-    # 使用纯原生原生容器卡片
     with st.container(border=True):
-        st.write(f"### {query}  `{display_phonetic}`")
+        st.write(f"### {query} `{display_phonetic}`")
         st.write(f"**释义：** {translation}")
         
-        # 播放发音
+        # 播放英文发音
         tts_query = query if is_english_input else translation
         audio_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={tts_query}&tl=en&client=tw-ob"
         st.audio(audio_url, format="audio/mp3")
 
-        # 保存生词本
+        # 生词本保存
         if is_english_input:
             if st.button("➕ 保存到我的生词本", key=f"save_{query}"):
                 item = {"word": query, "phonetic": display_phonetic, "translation": translation}
@@ -113,21 +103,18 @@ elif app_mode == "📷 拍照识字/翻译":
     uploaded_file = st.camera_input("拍照")
 
     if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        with st.spinner("正在识别图片中的文字..."):
-            img_bytes = uploaded_file.getvalue()
-            result = ocr_model.ocr(img_bytes, cls=True)
-            
-            recognized_text = ""
-            if result:
-                for idx in range(len(result)):
-                    res = result[idx]
-                    if res:
-                        for line in res:
-                            recognized_text += line[1][0] + " "
+        with st.spinner("正在解析图片文字..."):
+            try:
+                # 使用免费线上的 OCR API 识别图片（无需本地编译 C++ 依赖）
+                files = {'file': ('image.jpg', uploaded_file.getvalue(), 'image/jpeg')}
+                data = {'apikey': 'helloworld', 'language': 'eng'} # 使用免费公开节点
+                ocr_res = requests.post('https://api.ocr.space/parse/image', files=files, data=data, timeout=10)
+                
+                result_json = ocr_res.json()
+                recognized_text = result_json.get("ParsedResults", [{}])[0].get("ParsedText", "").strip()
+            except Exception:
+                recognized_text = ""
 
-        recognized_text = recognized_text.strip()
-        
         if recognized_text:
             st.success(f"识别到文字: {recognized_text}")
             if any('\u4e00' <= char <= '\u9fff' for char in recognized_text):
@@ -137,47 +124,15 @@ elif app_mode == "📷 拍照识字/翻译":
                 phonetic, translation, is_single_word = get_translation_and_phonetic(recognized_text, langpair="en|zh-CN")
                 display_result_and_save(recognized_text, phonetic, translation, is_single_word, is_english_input=True)
         else:
-            st.warning("未能在图片中识别到文字。")
+            st.warning("未能识别到清晰文字，请重新对焦拍摄。")
 
-# ==================== 3. 🎙️ 语音输入(中->英) ====================
-elif app_mode == "🎙️ 语音输入(中->英)":
-    st.write("点击下方按钮，开始说中文。")
-    audio_data = st.experimental_audio_input("按住说话")
-
-    if audio_data is not None:
-        with st.spinner("正在识别您的语音(中文)..."):
-            try:
-                with sr.AudioFile(BytesIO(audio_data.getvalue())) as source:
-                    audio_content = r.record(source)
-                
-                recognized_chinese = r.recognize_google(audio_content, language="zh-CN")
-                st.success(f"识别到您说: {recognized_chinese}")
-                
-                with st.spinner("正在翻译成英文..."):
-                    phonetic, translation, is_single_word = get_translation_and_phonetic(recognized_chinese, langpair="zh-CN|en")
-                    
-                    st.markdown("---")
-                    st.subheader("英文翻译结果")
-                    with st.container(border=True):
-                        st.write(f"### {translation}")
-                        st.write(f"（原文：{recognized_chinese}）")
-                        st.audio(f"https://translate.google.com/translate_tts?ie=UTF-8&q={translation}&tl=en&client=tw-ob", format="audio/mp3")
-
-            except sr.UnknownValueError:
-                st.error("未能听懂您的语音，请重试。")
-            except sr.RequestError as e:
-                st.error(f"语音识别服务请求失败: {e}")
-            except Exception as e:
-                st.error(f"发生错误: {e}")
-
-# ==================== 4. 本地生词本展示 ====================
+# ==================== 3. 生词本 ====================
 st.markdown("---")
 st.subheader("📖 我的生词本")
 
 if not st.session_state.vocab_list:
     st.info("暂无生词，快在上方查询并添加吧！")
 else:
-    # 遍历列表时使用副本 iterator 避免 IndexError
     for idx, item in enumerate(list(st.session_state.vocab_list)):
         with st.expander(f"📌 {item['word']}  {item['phonetic']}"):
             st.write(f"**释义：** {item['translation']}")
@@ -186,4 +141,3 @@ else:
             if st.button("删除", key=f"del_{idx}_{item['word']}"):
                 st.session_state.vocab_list.pop(idx)
                 st.rerun()
-        
