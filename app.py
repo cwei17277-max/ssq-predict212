@@ -26,12 +26,12 @@ app_mode = st.selectbox(
 
 # 精准查询单个英文单词音标（双接口容错）
 def get_single_word_phonetic(word):
-    # 清理非英文字母
-    clean_w = re.sub(r'[^a-zA-1]', '', word).strip().lower()
+    # 正确清理非英文字母字符
+    clean_w = re.sub(r'[^a-zA-Z]', '', word).strip().lower()
     if not clean_w:
         return ""
     
-    # 尝试接口 1: Dictionary API
+    # 尝试接口 1: Free Dictionary API
     try:
         dict_res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{clean_w}", timeout=3)
         if dict_res.status_code == 200:
@@ -86,7 +86,7 @@ def get_text_phonetics(text):
 def get_translation_and_phonetic(query, langpair="en|zh-CN"):
     translation = "翻译服务暂时不可用"
 
-    # 1. 翻译
+    # 1. 调用翻译 API
     try:
         trans_res = requests.get(
             f"https://api.mymemory.translated.net/get?q={query}&langpair={langpair}", 
@@ -102,7 +102,7 @@ def get_translation_and_phonetic(query, langpair="en|zh-CN"):
         # 英译中：获取输入英文的音标
         phonetic = get_text_phonetics(query)
     else:
-        # 中译英：获取翻译结果英文的音标
+        # 中译英：获取翻译出来的英文音标
         phonetic = get_text_phonetics(translation) if translation != "翻译服务暂时不可用" else ""
 
     return phonetic, translation
@@ -113,9 +113,10 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
     st.subheader("查词 / 翻译结果")
     
     with st.container(border=True):
+        p_text = phonetic if phonetic else "暂无音标"
+        
         if is_english_input:
             # 英译中
-            p_text = phonetic if phonetic else "暂无音标"
             st.write(f"### {query}")
             st.info(f"🔊 音标：**{p_text}**")
             st.write(f"**中文释义：** {translation}")
@@ -124,7 +125,6 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
             save_trans = translation
         else:
             # 中译英
-            p_text = phonetic if phonetic else "暂无音标"
             st.write(f"### 英文翻译：{translation}")
             st.info(f"🔊 英文音标：**{p_text}**")
             st.write(f"**中文原文：** {query}")
@@ -132,7 +132,7 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
             save_word = translation
             save_trans = query
 
-        # 发音组件
+        # 发音组件（Google TTS 朗读）
         audio_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={tts_word}&tl=en&client=tw-ob"
         st.audio(audio_url, format="audio/mp3")
 
@@ -220,4 +220,3 @@ else:
             if st.button("删除", key=f"del_{idx}_{item['word']}"):
                 st.session_state.vocab_list.pop(idx)
                 st.rerun()
-                
