@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import re
 from io import BytesIO
 import PIL.Image as Image
 
@@ -23,47 +24,69 @@ app_mode = st.selectbox(
     ["手动查词/翻译(自动识别)", "🇨🇳 中文查英文", "📷 拍照识字/翻译"]
 )
 
-# 查单个英文单词音标的工具函数
+# 精准查询单个英文单词音标（双接口容错）
 def get_single_word_phonetic(word):
-    cleaned_word = ''.join(e for e in word if e.isalnum() or e == '-').strip()
-    if not cleaned_word:
+    # 清理非英文字母
+    clean_w = re.sub(r'[^a-zA-1]', '', word).strip().lower()
+    if not clean_w:
         return ""
+    
+    # 尝试接口 1: Dictionary API
     try:
-        dict_res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{cleaned_word}", timeout=3)
+        dict_res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{clean_w}", timeout=3)
         if dict_res.status_code == 200:
             dict_data = dict_res.json()
-            phonetic = dict_data[0].get("phonetic", "")
-            if not phonetic:
-                for p in dict_data[0].get("phonetics", []):
-                    if "text" in p and p["text"]:
-                        phonetic = p["text"]
+            p = dict_data[0].get("phonetic", "")
+            if not p:
+                for item in dict_data[0].get("phonetics", []):
+                    if item.get("text"):
+                        p = item["text"]
                         break
-            return phonetic
+            if p:
+                return p
     except Exception:
         pass
+
+    # 尝试接口 2: Datamuse API (备用)
+    try:
+        dm_res = requests.get(f"https://api.datamuse.com/words?sp={clean_w}&qe=sp&md=r&ipa=1", timeout=3)
+        if dm_res.status_code == 200:
+            dm_data = dm_res.json()
+            if dm_data and "tags" in dm_data[0]:
+                for tag in dm_data[0]["tags"]:
+                    if tag.startswith("ipa_pron:"):
+                        return f"/{tag.replace('ipa_pron:', '')}/"
+    except Exception:
+        pass
+
     return ""
 
-# 自动处理多单词/整句的音标提取函数
-def get_phrase_phonetics(text):
-    words = text.split()
+# 提取英文文本中的音标（支持单词和短语）
+def get_text_phonetics(text):
+    # 提取所有英文单词
+    words = re.findall(r'[a-zA-Z]+', text)
+    if not words:
+        return ""
+    
+    # 如果是单个词
     if len(words) == 1:
         p = get_single_word_phonetic(words[0])
         return p if p else ""
     
-    # 如果是多词或短语，依次获取音标组合显示
-    phonetics_list = []
-    for w in words[:4]:  # 限制前4个单词，保障查询速度
+    # 如果是短语，查询前 3 个核心词的音标组合
+    results = []
+    for w in words[:3]:
         p = get_single_word_phonetic(w)
         if p:
-            phonetics_list.append(f"{w}: {p}")
-    
-    return " | ".join(phonetics_list) if phonetics_list else ""
+            results.append(f"{w} {p}")
+            
+    return " | ".join(results) if results else ""
 
-# 查词/翻译核心函数
+# 查词/翻译核心逻辑
 def get_translation_and_phonetic(query, langpair="en|zh-CN"):
     translation = "翻译服务暂时不可用"
 
-    # 1. 调用翻译接口
+    # 1. 翻译
     try:
         trans_res = requests.get(
             f"https://api.mymemory.translated.net/get?q={query}&langpair={langpair}", 
@@ -74,48 +97,48 @@ def get_translation_and_phonetic(query, langpair="en|zh-CN"):
     except Exception:
         pass
 
-    # 2. 提取英文部分的音标
+    # 2. 获取英文部分的音标
     if langpair.startswith("en"):
-        # 输入是英文，直接提取输入的音标
-        phonetic = get_phrase_phonetics(query)
+        # 英译中：获取输入英文的音标
+        phonetic = get_text_phonetics(query)
     else:
-        # 输入是中文（中译英），提取翻译出来的英文结果的音标
-        phonetic = get_phrase_phonetics(translation) if translation != "翻译服务暂时不可用" else ""
+        # 中译英：获取翻译结果英文的音标
+        phonetic = get_text_phonetics(translation) if translation != "翻译服务暂时不可用" else ""
 
     return phonetic, translation
 
-# 渲染结果与保存逻辑
+# 渲染卡片与保存
 def display_result_and_save(query, phonetic, translation, is_english_input=True):
     st.markdown("---")
     st.subheader("查词 / 翻译结果")
     
     with st.container(border=True):
         if is_english_input:
-            # 英文查中文
-            phonetic_str = f"`{phonetic}`" if phonetic else "`[暂未查到音标]`"
+            # 英译中
+            p_text = phonetic if phonetic else "暂无音标"
             st.write(f"### {query}")
-            st.write(f"**音标：** {phonetic_str}")
+            st.info(f"🔊 音标：**{p_text}**")
             st.write(f"**中文释义：** {translation}")
             tts_word = query
             save_word = query
             save_trans = translation
         else:
-            # 中文查英文
-            phonetic_str = f"`{phonetic}`" if phonetic else "`[暂未查到音标]`"
+            # 中译英
+            p_text = phonetic if phonetic else "暂无音标"
             st.write(f"### 英文翻译：{translation}")
-            st.write(f"**英文音标：** {phonetic_str}")
+            st.info(f"🔊 英文音标：**{p_text}**")
             st.write(f"**中文原文：** {query}")
             tts_word = translation
             save_word = translation
             save_trans = query
 
-        # 播放英文发音
+        # 发音组件
         audio_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={tts_word}&tl=en&client=tw-ob"
         st.audio(audio_url, format="audio/mp3")
 
         # 生词本保存
         if st.button("➕ 保存到我的生词本", key=f"save_{save_word}"):
-            item = {"word": save_word, "phonetic": phonetic_str, "translation": save_trans}
+            item = {"word": save_word, "phonetic": p_text, "translation": save_trans}
             if not any(v['word'].lower() == save_word.lower() for v in st.session_state.vocab_list):
                 st.session_state.vocab_list.insert(0, item)
                 st.success("已成功保存到生词本！")
@@ -190,10 +213,11 @@ if not st.session_state.vocab_list:
     st.info("暂无生词，快在上方查询并添加吧！")
 else:
     for idx, item in enumerate(list(st.session_state.vocab_list)):
-        with st.expander(f"📌 {item['word']}  {item['phonetic']}"):
+        with st.expander(f"📌 {item['word']}  [{item['phonetic']}]"):
             st.write(f"**释义：** {item['translation']}")
             st.audio(f"https://translate.google.com/translate_tts?ie=UTF-8&q={item['word']}&tl=en&client=tw-ob", format="audio/mp3")
             
             if st.button("删除", key=f"del_{idx}_{item['word']}"):
                 st.session_state.vocab_list.pop(idx)
                 st.rerun()
+                
