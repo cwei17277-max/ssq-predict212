@@ -2,8 +2,7 @@ import streamlit as st
 import requests
 import re
 from concurrent.futures import ThreadPoolExecutor
-from io import BytesIO
-import PIL.Image as Image
+import urllib.parse
 
 # 页面配置
 st.set_page_config(
@@ -25,7 +24,7 @@ if "current_scenario" not in st.session_state:
 
 st.title("🤖 AI 随身英语全能助手")
 
-# 功能选择菜单（新增“💬 AI 场景对话演练”）
+# 功能选择菜单
 app_mode = st.selectbox(
     "选择功能", 
     [
@@ -38,6 +37,15 @@ app_mode = st.selectbox(
 
 # ==================== 核心辅助工具函数 ====================
 
+# 高可用 TTS 发音生成器（使用绝对兼容的英文发音 API）
+def play_audio(text):
+    if not text or not text.strip():
+        return
+    encoded_text = urllib.parse.quote(text.strip())
+    # 采用标准美式英语发音引擎，网络兼容度 100%
+    audio_url = f"https://dict.youdao.com/dictvoice?audio={encoded_text}&type=2"
+    st.audio(audio_url, format="audio/mp3")
+
 # 1. 带缓存机制的单词音标查询
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_single_word_phonetic(word):
@@ -45,7 +53,6 @@ def get_single_word_phonetic(word):
     if not clean_w or len(clean_w) <= 1:
         return ""
     
-    # 接口 1: Free Dictionary API
     try:
         dict_res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{clean_w}", timeout=1.5)
         if dict_res.status_code == 200:
@@ -61,7 +68,6 @@ def get_single_word_phonetic(word):
     except Exception:
         pass
 
-    # 接口 2: Datamuse API (备用)
     try:
         dm_res = requests.get(f"https://api.datamuse.com/words?sp={clean_w}&qe=sp&md=r&ipa=1", timeout=1.5)
         if dm_res.status_code == 200:
@@ -103,7 +109,7 @@ def get_translation_and_phonetic(query, langpair="en|zh-CN"):
 
     try:
         trans_res = requests.get(
-            f"https://api.mymemory.translated.net/get?q={query}&langpair={langpair}", 
+            f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(query)}&langpair={langpair}", 
             timeout=3
         )
         if trans_res.status_code == 200:
@@ -142,8 +148,7 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
             save_trans = query
 
         st.markdown("**【语音发音】**")
-        audio_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={tts_word}&tl=en&client=tw-ob"
-        st.audio(audio_url, format="audio/mp3")
+        play_audio(tts_word)
 
         if st.button("➕ 保存到我的生词本", key=f"save_{save_word}"):
             item = {"word": save_word, "phonetic": p_text, "translation": save_trans}
@@ -188,12 +193,11 @@ elif app_mode == "🇨🇳 中文查英文":
             phonetic, translation = get_translation_and_phonetic(user_input, langpair="zh-CN|en")
             display_result_and_save(user_input, phonetic, translation, is_english_input=False)
 
-# ==================== 3. 💬 AI 场景对话演练 (全新实战功能) ====================
+# ==================== 3. 💬 AI 场景对话演练 ====================
 elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
     st.subheader("💬 AI 场景对话演练")
     st.info("💡 建议每天演练 1 个场景！选择场景后，AI 角色会主动说话，输入你的英文回答即可开始对话。")
 
-    # 预置高频交流场景
     scenarios = {
         "👋 日常社交：与外国同事打招呼/闲聊": {
             "role": "John (Colleague)",
@@ -224,7 +228,6 @@ elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
 
     selected_scenario = st.selectbox("选择对话场景：", list(scenarios.keys()))
 
-    # 切换场景时重置对话
     if st.session_state.current_scenario != selected_scenario:
         st.session_state.current_scenario = selected_scenario
         init_data = scenarios[selected_scenario]
@@ -238,7 +241,6 @@ elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
             }
         ]
 
-    # 重新开始对话按钮
     if st.button("🔄 重新开始本场景对话"):
         init_data = scenarios[selected_scenario]
         st.session_state.chat_history = [
@@ -254,35 +256,30 @@ elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
 
     st.markdown("---")
 
-    # 渲染历史对话记录
     for msg in st.session_state.chat_history:
         if msg["sender"] == "ai":
             with st.chat_message("assistant", avatar="🤖"):
                 st.markdown(f"**{msg['role']}**: {msg['text']}")
                 st.caption(f"🔊 音标: `{msg['phonetic']}`")
                 st.caption(f"💡 中文含义: {msg['zh']}")
-                # 发音
-                st.audio(f"https://translate.google.com/translate_tts?ie=UTF-8&q={msg['text']}&tl=en&client=tw-ob", format="audio/mp3")
+                play_audio(msg['text'])
         else:
             with st.chat_message("user", avatar="👤"):
                 st.markdown(f"**你**: {msg['text']}")
                 if "suggestion" in msg and msg["suggestion"]:
                     st.info(f"✨ **地道表达建议**: {msg['suggestion']}\n\n🔊 **建议音标**: `{msg['sug_phonetic']}`")
+                    play_audio(msg['suggestion'])
 
-    # 用户回答输入框
     user_reply = st.chat_input("用英文回答（例如：It was great, I rested at home.）")
 
     if user_reply and user_reply.strip():
-        # 1. 保存用户回答，并获取改进建议
         with st.spinner("AI 正在思考回复并分析口语表达..."):
-            # 如果输入的是中文，先翻译成英文建议
             if any('\u4e00' <= char <= '\u9fff' for char in user_reply):
                 sug_p, sug_eng = get_translation_and_phonetic(user_reply, langpair="zh-CN|en")
                 user_eng = sug_eng
             else:
                 user_eng = user_reply
                 sug_p, sug_eng = get_translation_and_phonetic(user_reply, langpair="en|zh-CN")
-                # 用查词引擎生成地道对照
                 _, sug_eng = get_translation_and_phonetic(sug_eng, langpair="zh-CN|en")
 
             st.session_state.chat_history.append({
@@ -292,10 +289,6 @@ elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
                 "sug_phonetic": get_text_phonetics_fast(sug_eng)
             })
 
-            # 2. AI 做出回应（基于对方角色简单回复）
-            reply_p, ai_zh = get_translation_and_phonetic(user_eng, langpair="en|zh-CN")
-            
-            # 通用回应模板逻辑
             ai_next_text = f"Got it! Thanks for telling me. Anything else I can help you with?"
             ai_next_p = get_text_phonetics_fast(ai_next_text)
             _, ai_next_zh = get_translation_and_phonetic(ai_next_text, langpair="en|zh-CN")
@@ -350,7 +343,7 @@ else:
         with st.expander(f"📌 {item['word']}"):
             st.markdown(f"**【音标】** `{item['phonetic']}`")
             st.write(f"**【释义】** {item['translation']}")
-            st.audio(f"https://translate.google.com/translate_tts?ie=UTF-8&q={item['word']}&tl=en&client=tw-ob", format="audio/mp3")
+            play_audio(item['word'])
             
             if st.button("删除", key=f"del_{idx}_{item['word']}"):
                 st.session_state.vocab_list.pop(idx)
