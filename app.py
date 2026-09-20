@@ -3,7 +3,9 @@ import requests
 import re
 from concurrent.futures import ThreadPoolExecutor
 import urllib.parse
-import streamlit.components.v1 as components
+import base64
+from io import BytesIO
+from gtts import gTTS
 
 # 页面配置
 st.set_page_config(
@@ -38,61 +40,29 @@ app_mode = st.selectbox(
 
 # ==================== 核心辅助工具函数 ====================
 
-# 多源保障语音播放组件（包含兼容性强的标准接口 + 本地引擎双重保障）
-def play_audio(text, key_prefix="audio"):
+# 使用服务器端 gTTS 生成二进制音频（Base64 编码直接嵌入 HTML，无需跨域，支持所有手机和浏览器）
+@st.cache_data(show_spinner=False)
+def generate_audio_base64(text):
     if not text or not text.strip():
-        return
-    
-    clean_text = text.strip().replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"').replace('\n', ' ')
-    encoded_text = urllib.parse.quote(text.strip())
-    
-    # 采用高兼容 Google TTS 官方静态接口（支持绝大多数浏览器与移动端直接播放）
-    google_audio_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl=en&client=tw-ob"
-    
-    html_code = f"""
-    <div style="margin-top: 8px; margin-bottom: 8px;">
-        <button onclick="playAudio_{key_prefix}()" style="
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 8px 18px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 600;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
-        ">
-            🔊 点击标准发音
-        </button>
-        <script>
-            function playAudio_{key_prefix}() {{
-                // 方案 1: 使用直接音频对象播放 (兼容性最好，不被跨域阻断)
-                var audio = new Audio("{google_audio_url}");
-                var playPromise = audio.play();
-                
-                if (playPromise !== undefined) {{
-                    playPromise.catch(function(error) {{
-                        console.log("网络音频播放受阻，尝试系统自带引擎...", error);
-                        // 方案 2: 降级使用 Web Speech API
-                        if ('speechSynthesis' in window) {{
-                            window.speechSynthesis.cancel();
-                            var msg = new SpeechSynthesisUtterance("{clean_text}");
-                            msg.lang = 'en-US';
-                            msg.rate = 0.85;
-                            window.speechSynthesis.speak(msg);
-                        }} else {{
-                            alert("请检查设备是否开启静音模式，或尝试使用 Chrome/Edge 浏览器打开。");
-                        }}
-                    }});
-                }}
-            }}
-        </script>
-    </div>
-    """
-    components.html(html_code, height=55)
+        return None
+    try:
+        clean_text = text.strip()
+        tts = gTTS(text=clean_text, lang='en', slow=False)
+        fp = BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
+        b64 = base64.b64encode(fp.read()).decode()
+        return f"data:audio/mp3;base64,{b64}"
+    except Exception as e:
+        return None
+
+def play_audio(text, key_prefix="audio"):
+    audio_data = generate_audio_base64(text)
+    if audio_data:
+        # 使用 Streamlit 原生 st.audio，传入 Base64 编码的数据流
+        st.audio(audio_data, format="audio/mp3")
+    else:
+        st.error("语音生成失败，请检查网络连接。")
 
 # 1. 带缓存机制的单词音标查询
 @st.cache_data(ttl=3600, show_spinner=False)
