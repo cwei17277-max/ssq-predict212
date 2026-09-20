@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import re
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import PIL.Image as Image
 
@@ -24,15 +25,16 @@ app_mode = st.selectbox(
     ["手动查词/翻译(自动识别)", "🇨🇳 中文查英文", "📷 拍照识字/翻译"]
 )
 
-# 精准查询单个英文单词音标（双接口容错）
+# 1. 带缓存机制的单词音标查询（极大提升二次查询速度）
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_single_word_phonetic(word):
     clean_w = re.sub(r'[^a-zA-Z]', '', word).strip().lower()
-    if not clean_w:
+    if not clean_w or len(clean_w) <= 1:  # 忽略单字母（如 a, I）提升效率
         return ""
     
-    # 接口 1: Free Dictionary API
+    # 接口 1: Free Dictionary API (超时设为 1.5 秒)
     try:
-        dict_res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{clean_w}", timeout=3)
+        dict_res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{clean_w}", timeout=1.5)
         if dict_res.status_code == 200:
             dict_data = dict_res.json()
             p = dict_data[0].get("phonetic", "")
@@ -46,9 +48,9 @@ def get_single_word_phonetic(word):
     except Exception:
         pass
 
-    # 接口 2: Datamuse API (备用)
+    # 接口 2: Datamuse API (备用接口，超时设为 1.5 秒)
     try:
-        dm_res = requests.get(f"https://api.datamuse.com/words?sp={clean_w}&qe=sp&md=r&ipa=1", timeout=3)
+        dm_res = requests.get(f"https://api.datamuse.com/words?sp={clean_w}&qe=sp&md=r&ipa=1", timeout=1.5)
         if dm_res.status_code == 200:
             dm_data = dm_res.json()
             if dm_data and "tags" in dm_data[0]:
@@ -60,25 +62,28 @@ def get_single_word_phonetic(word):
 
     return ""
 
-# 提取英文文本中每一个单词的完整音标序列
-def get_text_phonetics(text):
+# 2. 多线程并发提取英文音标（大幅缩短整句查询等待时间）
+def get_text_phonetics_fast(text):
     words = re.findall(r"[a-zA-Z']+", text)
     if not words:
         return ""
     
-    # 单个单词处理
+    # 单个单词直接查
     if len(words) == 1:
         p = get_single_word_phonetic(words[0])
-        return p if p else ""
+        return f"{words[0]} {p}" if p else words[0]
     
-    # 针对整句话：逐词查询并拼接到列表中，不漏掉任何单词
+    # 整句多单词：使用 ThreadPoolExecutor 并发同时查询所有单词
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        phonetics = list(executor.map(get_single_word_phonetic, words))
+    
+    # 组合结果
     results = []
-    for w in words:
-        p = get_single_word_phonetic(w)
+    for w, p in zip(words, phonetics):
         if p:
             results.append(f"{w} {p}")
         else:
-            results.append(f"{w}") # 如果个别小词查不到音标，保留单词本身
+            results.append(w)
             
     return "  ".join(results)
 
@@ -86,22 +91,22 @@ def get_text_phonetics(text):
 def get_translation_and_phonetic(query, langpair="en|zh-CN"):
     translation = "翻译服务暂时不可用"
 
-    # 1. 调用翻译 API
+    # 1. 翻译请求 (超时 3 秒)
     try:
         trans_res = requests.get(
             f"https://api.mymemory.translated.net/get?q={query}&langpair={langpair}", 
-            timeout=5
+            timeout=3
         )
         if trans_res.status_code == 200:
             translation = trans_res.json()["responseData"]["translatedText"]
     except Exception:
         pass
 
-    # 2. 获取英文部分的音标
+    # 2. 并发快速获取英文音标
     if langpair.startswith("en"):
-        phonetic = get_text_phonetics(query)
+        phonetic = get_text_phonetics_fast(query)
     else:
-        phonetic = get_text_phonetics(translation) if translation != "翻译服务暂时不可用" else ""
+        phonetic = get_text_phonetics_fast(translation) if translation != "翻译服务暂时不可用" else ""
 
     return phonetic, translation
 
@@ -155,12 +160,13 @@ if app_mode == "手动查词/翻译(自动识别)":
             st.rerun()
 
     if search_btn and user_input.strip():
-        if any('\u4e00' <= char <= '\u9fff' for char in user_input):
-            phonetic, translation = get_translation_and_phonetic(user_input, langpair="zh-CN|en")
-            display_result_and_save(user_input, phonetic, translation, is_english_input=False)
-        else:
-            phonetic, translation = get_translation_and_phonetic(user_input, langpair="en|zh-CN")
-            display_result_and_save(user_input, phonetic, translation, is_english_input=True)
+        with st.spinner("正在快速翻译与获取音标..."):
+            if any('\u4e00' <= char <= '\u9fff' for char in user_input):
+                phonetic, translation = get_translation_and_phonetic(user_input, langpair="zh-CN|en")
+                display_result_and_save(user_input, phonetic, translation, is_english_input=False)
+            else:
+                phonetic, translation = get_translation_and_phonetic(user_input, langpair="en|zh-CN")
+                display_result_and_save(user_input, phonetic, translation, is_english_input=True)
 
 # ==================== 2. 🇨🇳 中文查英文 ====================
 elif app_mode == "🇨🇳 中文查英文":
@@ -173,8 +179,9 @@ elif app_mode == "🇨🇳 中文查英文":
             st.rerun()
 
     if search_btn and user_input.strip():
-        phonetic, translation = get_translation_and_phonetic(user_input, langpair="zh-CN|en")
-        display_result_and_save(user_input, phonetic, translation, is_english_input=False)
+        with st.spinner("正在快速翻译与获取音标..."):
+            phonetic, translation = get_translation_and_phonetic(user_input, langpair="zh-CN|en")
+            display_result_and_save(user_input, phonetic, translation, is_english_input=False)
 
 # ==================== 3. 📷 拍照识字/翻译 ====================
 elif app_mode == "📷 拍照识字/翻译":
@@ -195,12 +202,13 @@ elif app_mode == "📷 拍照识字/翻译":
 
         if recognized_text:
             st.success(f"识别到文字: {recognized_text}")
-            if any('\u4e00' <= char <= '\u9fff' for char in recognized_text):
-                phonetic, translation = get_translation_and_phonetic(recognized_text, langpair="zh-CN|en")
-                display_result_and_save(recognized_text, phonetic, translation, is_english_input=False)
-            else:
-                phonetic, translation = get_translation_and_phonetic(recognized_text, langpair="en|zh-CN")
-                display_result_and_save(recognized_text, phonetic, translation, is_english_input=True)
+            with st.spinner("正在快速翻译与获取音标..."):
+                if any('\u4e00' <= char <= '\u9fff' for char in recognized_text):
+                    phonetic, translation = get_translation_and_phonetic(recognized_text, langpair="zh-CN|en")
+                    display_result_and_save(recognized_text, phonetic, translation, is_english_input=False)
+                else:
+                    phonetic, translation = get_translation_and_phonetic(recognized_text, langpair="en|zh-CN")
+                    display_result_and_save(recognized_text, phonetic, translation, is_english_input=True)
         else:
             st.warning("未能识别到清晰文字，请重新对焦拍摄。")
 
