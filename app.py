@@ -37,13 +37,22 @@ app_mode = st.selectbox(
 
 # ==================== 核心辅助工具函数 ====================
 
-# 高可用 TTS 发音生成器（使用绝对兼容的英文发音 API）
+# 高可用长句/短句通用 TTS 发音生成器
 def play_audio(text):
     if not text or not text.strip():
         return
-    encoded_text = urllib.parse.quote(text.strip())
-    # 采用标准美式英语发音引擎，网络兼容度 100%
-    audio_url = f"https://dict.youdao.com/dictvoice?audio={encoded_text}&type=2"
+    
+    clean_text = text.strip()
+    encoded_text = urllib.parse.quote(clean_text)
+    
+    # 针对长句（字数较多）使用支持长文本的发音 API，短句使用极速 API
+    if len(clean_text) > 60:
+        # 兼容长句的标准美式发音引擎
+        audio_url = f"https://api.streamelements.com/kappa/v2/speech?voice=Brian&text={encoded_text}"
+    else:
+        # 极速短句发音引擎
+        audio_url = f"https://dict.youdao.com/dictvoice?audio={encoded_text}&type=2"
+        
     st.audio(audio_url, format="audio/mp3")
 
 # 1. 带缓存机制的单词音标查询
