@@ -3,6 +3,7 @@ import requests
 import re
 from concurrent.futures import ThreadPoolExecutor
 import urllib.parse
+import streamlit.components.v1 as components
 
 # 页面配置
 st.set_page_config(
@@ -37,23 +38,38 @@ app_mode = st.selectbox(
 
 # ==================== 核心辅助工具函数 ====================
 
-# 高可用长句/短句通用 TTS 发音生成器
-def play_audio(text):
+# 利用 Web Speech API 与高兼容音频引擎的双重保障发音组件
+def play_audio(text, key_prefix="audio"):
     if not text or not text.strip():
         return
     
-    clean_text = text.strip()
-    encoded_text = urllib.parse.quote(clean_text)
+    clean_text = text.strip().replace("'", "\\'").replace('"', '\\"').replace('\n', ' ')
+    encoded_text = urllib.parse.quote(text.strip())
+    audio_url = f"https://dict.youdao.com/dictvoice?audio={encoded_text}&type=2"
     
-    # 针对长句（字数较多）使用支持长文本的发音 API，短句使用极速 API
-    if len(clean_text) > 60:
-        # 兼容长句的标准美式发音引擎
-        audio_url = f"https://api.streamelements.com/kappa/v2/speech?voice=Brian&text={encoded_text}"
-    else:
-        # 极速短句发音引擎
-        audio_url = f"https://dict.youdao.com/dictvoice?audio={encoded_text}&type=2"
-        
-    st.audio(audio_url, format="audio/mp3")
+    # 结合 HTML5 控件与浏览器原生朗读引擎，防拦截且支持无上限长句
+    html_code = f"""
+    <div style="margin-top: 5px; margin-bottom: 10px;">
+        <audio id="audio_{key_prefix}" src="{audio_url}" controls style="height: 36px; width: 100%; max-width: 400px;"></audio>
+        <button onclick="speakText_{key_prefix}()" style="margin-top: 5px; padding: 5px 12px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">
+            🔊 浏览器原生真人朗读 (适合长句/无卡顿)
+        </button>
+        <script>
+            function speakText_{key_prefix}() {{
+                if ('speechSynthesis' in window) {{
+                    window.speechSynthesis.cancel();
+                    var msg = new SpeechSynthesisUtterance("{clean_text}");
+                    msg.lang = 'en-US';
+                    msg.rate = 0.9; // 略微放慢发音，适合口语练习
+                    window.speechSynthesis.speak(msg);
+                }} else {{
+                    document.getElementById('audio_{key_prefix}').play();
+                }}
+            }}
+        </script>
+    </div>
+    """
+    components.html(html_code, height=85)
 
 # 1. 带缓存机制的单词音标查询
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -157,7 +173,7 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
             save_trans = query
 
         st.markdown("**【语音发音】**")
-        play_audio(tts_word)
+        play_audio(tts_word, key_prefix=f"res_{hash(tts_word)}")
 
         if st.button("➕ 保存到我的生词本", key=f"save_{save_word}"):
             item = {"word": save_word, "phonetic": p_text, "translation": save_trans}
@@ -265,19 +281,19 @@ elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
 
     st.markdown("---")
 
-    for msg in st.session_state.chat_history:
+    for idx, msg in enumerate(st.session_state.chat_history):
         if msg["sender"] == "ai":
             with st.chat_message("assistant", avatar="🤖"):
                 st.markdown(f"**{msg['role']}**: {msg['text']}")
                 st.caption(f"🔊 音标: `{msg['phonetic']}`")
                 st.caption(f"💡 中文含义: {msg['zh']}")
-                play_audio(msg['text'])
+                play_audio(msg['text'], key_prefix=f"ai_{idx}")
         else:
             with st.chat_message("user", avatar="👤"):
                 st.markdown(f"**你**: {msg['text']}")
                 if "suggestion" in msg and msg["suggestion"]:
                     st.info(f"✨ **地道表达建议**: {msg['suggestion']}\n\n🔊 **建议音标**: `{msg['sug_phonetic']}`")
-                    play_audio(msg['suggestion'])
+                    play_audio(msg['suggestion'], key_prefix=f"sug_{idx}")
 
     user_reply = st.chat_input("用英文回答（例如：It was great, I rested at home.）")
 
@@ -352,7 +368,7 @@ else:
         with st.expander(f"📌 {item['word']}"):
             st.markdown(f"**【音标】** `{item['phonetic']}`")
             st.write(f"**【释义】** {item['translation']}")
-            play_audio(item['word'])
+            play_audio(item['word'], key_prefix=f"vocab_{idx}")
             
             if st.button("删除", key=f"del_{idx}_{item['word']}"):
                 st.session_state.vocab_list.pop(idx)
