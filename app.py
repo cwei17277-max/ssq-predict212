@@ -38,21 +38,32 @@ app_mode = st.selectbox(
 
 # ==================== 核心辅助工具函数 ====================
 
-# 利用 Web Speech API 与高兼容音频引擎的双重保障发音组件
+# 纯本地 Web Speech 原生朗读组件（零网络依赖，100% 稳定发音）
 def play_audio(text, key_prefix="audio"):
     if not text or not text.strip():
         return
     
-    clean_text = text.strip().replace("'", "\\'").replace('"', '\\"').replace('\n', ' ')
-    encoded_text = urllib.parse.quote(text.strip())
-    audio_url = f"https://dict.youdao.com/dictvoice?audio={encoded_text}&type=2"
+    # 过滤转义字符，防止 JS 解析报错
+    clean_text = text.strip().replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"').replace('\n', ' ')
     
-    # 结合 HTML5 控件与浏览器原生朗读引擎，防拦截且支持无上限长句
     html_code = f"""
-    <div style="margin-top: 5px; margin-bottom: 10px;">
-        <audio id="audio_{key_prefix}" src="{audio_url}" controls style="height: 36px; width: 100%; max-width: 400px;"></audio>
-        <button onclick="speakText_{key_prefix}()" style="margin-top: 5px; padding: 5px 12px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">
-            🔊 浏览器原生真人朗读 (适合长句/无卡顿)
+    <div style="margin-top: 5px; margin-bottom: 5px;">
+        <button onclick="speakText_{key_prefix}()" style="
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 16px;
+            background-color: #2e7d32;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: background-color 0.2s;
+        " onmouseover="this.style.backgroundColor='#1b5e20'" onmouseout="this.style.backgroundColor='#2e7d32'">
+            🔊 点击标准英文发音 (朗读整句/单词)
         </button>
         <script>
             function speakText_{key_prefix}() {{
@@ -60,16 +71,16 @@ def play_audio(text, key_prefix="audio"):
                     window.speechSynthesis.cancel();
                     var msg = new SpeechSynthesisUtterance("{clean_text}");
                     msg.lang = 'en-US';
-                    msg.rate = 0.9; // 略微放慢发音，适合口语练习
+                    msg.rate = 0.85; // 稍慢语速，清晰易懂
                     window.speechSynthesis.speak(msg);
                 }} else {{
-                    document.getElementById('audio_{key_prefix}').play();
+                    alert("您的浏览器暂不支持语音合成功能，请更换 Chrome 或 Edge 浏览器。");
                 }}
             }}
         </script>
     </div>
     """
-    components.html(html_code, height=85)
+    components.html(html_code, height=50)
 
 # 1. 带缓存机制的单词音标查询
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -173,7 +184,7 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
             save_trans = query
 
         st.markdown("**【语音发音】**")
-        play_audio(tts_word, key_prefix=f"res_{hash(tts_word)}")
+        play_audio(tts_word, key_prefix=f"res_{abs(hash(tts_word))}")
 
         if st.button("➕ 保存到我的生词本", key=f"save_{save_word}"):
             item = {"word": save_word, "phonetic": p_text, "translation": save_trans}
