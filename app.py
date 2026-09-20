@@ -38,49 +38,61 @@ app_mode = st.selectbox(
 
 # ==================== 核心辅助工具函数 ====================
 
-# 纯本地 Web Speech 原生朗读组件（零网络依赖，100% 稳定发音）
+# 多源保障语音播放组件（包含兼容性强的标准接口 + 本地引擎双重保障）
 def play_audio(text, key_prefix="audio"):
     if not text or not text.strip():
         return
     
-    # 过滤转义字符，防止 JS 解析报错
     clean_text = text.strip().replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"').replace('\n', ' ')
+    encoded_text = urllib.parse.quote(text.strip())
+    
+    # 采用高兼容 Google TTS 官方静态接口（支持绝大多数浏览器与移动端直接播放）
+    google_audio_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl=en&client=tw-ob"
     
     html_code = f"""
-    <div style="margin-top: 5px; margin-bottom: 5px;">
-        <button onclick="speakText_{key_prefix}()" style="
+    <div style="margin-top: 8px; margin-bottom: 8px;">
+        <button onclick="playAudio_{key_prefix}()" style="
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            padding: 8px 16px;
-            background-color: #2e7d32;
+            padding: 8px 18px;
+            background-color: #007bff;
             color: white;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-size: 14px;
-            font-weight: 500;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: background-color 0.2s;
-        " onmouseover="this.style.backgroundColor='#1b5e20'" onmouseout="this.style.backgroundColor='#2e7d32'">
-            🔊 点击标准英文发音 (朗读整句/单词)
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+        ">
+            🔊 点击标准发音
         </button>
         <script>
-            function speakText_{key_prefix}() {{
-                if ('speechSynthesis' in window) {{
-                    window.speechSynthesis.cancel();
-                    var msg = new SpeechSynthesisUtterance("{clean_text}");
-                    msg.lang = 'en-US';
-                    msg.rate = 0.85; // 稍慢语速，清晰易懂
-                    window.speechSynthesis.speak(msg);
-                }} else {{
-                    alert("您的浏览器暂不支持语音合成功能，请更换 Chrome 或 Edge 浏览器。");
+            function playAudio_{key_prefix}() {{
+                // 方案 1: 使用直接音频对象播放 (兼容性最好，不被跨域阻断)
+                var audio = new Audio("{google_audio_url}");
+                var playPromise = audio.play();
+                
+                if (playPromise !== undefined) {{
+                    playPromise.catch(function(error) {{
+                        console.log("网络音频播放受阻，尝试系统自带引擎...", error);
+                        // 方案 2: 降级使用 Web Speech API
+                        if ('speechSynthesis' in window) {{
+                            window.speechSynthesis.cancel();
+                            var msg = new SpeechSynthesisUtterance("{clean_text}");
+                            msg.lang = 'en-US';
+                            msg.rate = 0.85;
+                            window.speechSynthesis.speak(msg);
+                        }} else {{
+                            alert("请检查设备是否开启静音模式，或尝试使用 Chrome/Edge 浏览器打开。");
+                        }}
+                    }});
                 }}
             }}
         </script>
     </div>
     """
-    components.html(html_code, height=50)
+    components.html(html_code, height=55)
 
 # 1. 带缓存机制的单词音标查询
 @st.cache_data(ttl=3600, show_spinner=False)
