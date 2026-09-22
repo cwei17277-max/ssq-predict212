@@ -16,10 +16,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 自定义 CSS 样式：控制紫色英文、红色音标、蓝色复制按钮
+# 自定义 CSS 样式：精细控制紫色英文、红色音标、以及将 st.code 官方复制按钮强行变为蓝色
 st.markdown("""
 <style>
-/* 紫色英文文本样式 */
+/* 紫色英文文本 */
 .purple-text {
     color: #6c5ce7 !important;
     font-size: 1.25rem !important;
@@ -28,7 +28,7 @@ st.markdown("""
     word-break: break-word;
 }
 
-/* 红色音标文本样式 */
+/* 红色音标文本 */
 .red-phonetic {
     color: #d63031 !important;
     font-family: monospace, sans-serif !important;
@@ -37,40 +37,33 @@ st.markdown("""
     word-break: break-word;
 }
 
-/* 蓝色复制按钮样式 */
-.copy-btn-blue {
+/* 强制修改 st.code 组件内的英文文本颜色为紫色 */
+.stCode code {
+    color: #6c5ce7 !important;
+    font-size: 1.1rem !important;
+    font-weight: 600 !important;
+    background-color: rgba(108, 92, 231, 0.08) !important;
+}
+
+/* 强制把 Streamlit 官方 code 框右上角的复制按钮改成蓝色 */
+.stCode button {
     background-color: #0984e3 !important;
     color: #ffffff !important;
-    border: none !important;
     border-radius: 6px !important;
-    padding: 6px 14px !important;
-    font-size: 0.85rem !important;
-    font-weight: 600 !important;
-    cursor: pointer !important;
+    border: none !important;
+    opacity: 0.9 !important;
     transition: all 0.2s ease-in-out !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 4px !important;
-    margin-top: 6px !important;
-    margin-bottom: 8px !important;
 }
 
-.copy-btn-blue:hover {
+.stCode button:hover {
     background-color: #0069d9 !important;
-    box-shadow: 0 2px 6px rgba(9, 132, 227, 0.4) !important;
+    opacity: 1 !important;
+    transform: scale(1.05) !important;
 }
 
-.copy-btn-blue:active {
-    transform: scale(0.98) !important;
-}
-
-/* 自定义卡片容器 */
-.custom-card {
-    background-color: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(128, 128, 128, 0.2);
-    border-radius: 10px;
-    padding: 16px;
-    margin-bottom: 12px;
+.stCode button svg {
+    fill: #ffffff !important;
+    color: #ffffff !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -121,28 +114,6 @@ def play_audio(text, key_prefix="audio"):
         st.audio(audio_data, format="audio/mp3")
     else:
         st.error("语音生成失败，请检查网络连接。")
-
-# 渲染带色彩（紫色英文、红色音标、蓝色复制按钮）的组件
-def render_custom_copy_box(text, label="点击复制", is_purple=True):
-    safe_text = html.escape(text)
-    btn_id = f"btn_{abs(hash(text))}"
-    text_class = "purple-text" if is_purple else ""
-    
-    html_code = f"""
-    <div style="margin-bottom: 8px;">
-        <div class="{text_class}" id="text_{btn_id}">{safe_text}</div>
-        <button class="copy-btn-blue" onclick="
-            navigator.clipboard.writeText(document.getElementById('text_{btn_id}').innerText).then(function() {{
-                var btn = document.getElementById('{btn_id}');
-                btn.innerText = '✅ 已复制！';
-                setTimeout(function() {{ btn.innerText = '📋 {label}'; }}, 2000);
-            }});
-        " id="{btn_id}">
-            📋 {label}
-        </button>
-    </div>
-    """
-    st.markdown(html_code, unsafe_allow_html=True)
 
 # 1. 带缓存机制的单词音标查询
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -222,7 +193,7 @@ def get_translation_and_phonetic(query, langpair="en|zh-CN"):
 
     return phonetic, translation
 
-# 4. 结果渲染与生词卡保存
+# 4. 结果渲染与生词卡保存（原生稳定一键复制 + 自定义颜色）
 def display_result_and_save(query, phonetic, translation, is_english_input=True):
     st.markdown("---")
     st.subheader("查词 / 翻译结果")
@@ -231,14 +202,14 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
         p_text = phonetic if phonetic else "暂无音标"
         
         if is_english_input:
-            st.markdown("**【英文原文】**")
-            render_custom_copy_box(query, label="复制原文", is_purple=True)
+            st.markdown("**【英文原文】**（点击右侧蓝色按钮一键复制）")
+            st.code(query, language=None)
             
             st.markdown(f"**【对应音标】**\n<div class='red-phonetic'>{html.escape(p_text)}</div>", unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
             
             st.markdown("**【中文释义】**")
-            render_custom_copy_box(translation, label="复制中文释义", is_purple=False)
+            st.write(translation)
             
             tts_word = query
             save_word = query
@@ -247,8 +218,8 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
             st.markdown("**【中文原文】**")
             st.write(query)
             
-            st.markdown("**【英文翻译】**")
-            render_custom_copy_box(translation, label="复制英文翻译", is_purple=True)
+            st.markdown("**【英文翻译】**（点击右侧蓝色按钮一键复制）")
+            st.code(translation, language=None)
             
             st.markdown(f"**【对应音标】**\n<div class='red-phonetic'>{html.escape(p_text)}</div>", unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
@@ -377,8 +348,8 @@ elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
             with st.chat_message("user", avatar="👤"):
                 st.markdown(f"**你**: {msg['text']}")
                 if "suggestion" in msg and msg["suggestion"]:
-                    st.markdown("✨ **地道表达建议**：")
-                    render_custom_copy_box(msg["suggestion"], label="复制地道表达", is_purple=True)
+                    st.markdown("✨ **地道表达建议**（点击右侧蓝色按钮复制）：")
+                    st.code(msg["suggestion"], language=None)
                     st.markdown(f"🔊 **建议音标**: <span class='red-phonetic'>{html.escape(msg['sug_phonetic'])}</span>", unsafe_allow_html=True)
                     play_audio(msg["suggestion"], key_prefix=f"sug_{idx}")
 
@@ -454,7 +425,7 @@ else:
     for idx, item in enumerate(list(st.session_state.vocab_list)):
         with st.expander(f"📌 {item['word']}"):
             st.markdown("**【单词/短语】**")
-            render_custom_copy_box(item['word'], label="复制词汇", is_purple=True)
+            st.code(item['word'], language=None)
             
             st.markdown(f"**【音标】** <span class='red-phonetic'>{html.escape(item['phonetic'])}</span>", unsafe_allow_html=True)
             st.write(f"**【释义】** {item['translation']}")
