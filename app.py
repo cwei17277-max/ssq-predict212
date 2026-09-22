@@ -59,7 +59,6 @@ def generate_audio_base64(text):
 def play_audio(text, key_prefix="audio"):
     audio_data = generate_audio_base64(text)
     if audio_data:
-        # 使用 Streamlit 原生 st.audio，传入 Base64 编码的数据流
         st.audio(audio_data, format="audio/mp3")
     else:
         st.error("语音生成失败，请检查网络连接。")
@@ -142,7 +141,7 @@ def get_translation_and_phonetic(query, langpair="en|zh-CN"):
 
     return phonetic, translation
 
-# 4. 结果渲染与生词卡保存
+# 4. 结果渲染与生词卡保存（增加一键复制功能）
 def display_result_and_save(query, phonetic, translation, is_english_input=True):
     st.markdown("---")
     st.subheader("查词 / 翻译结果")
@@ -151,16 +150,26 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
         p_text = phonetic if phonetic else "暂无音标"
         
         if is_english_input:
-            st.markdown(f"**【英文原文】**\n### {query}")
+            st.markdown("**【英文原文】**")
+            st.code(query, language=None)  # 右上角自带一键复制按钮
+            
             st.markdown(f"**【对应音标】**\n`{p_text}`")
-            st.write(f"**【中文释义】** {translation}")
+            
+            st.markdown("**【中文释义】**")
+            st.code(translation, language=None)  # 右上角自带一键复制按钮
+            
             tts_word = query
             save_word = query
             save_trans = translation
         else:
-            st.markdown(f"**【中文原文】** {query}")
-            st.markdown(f"**【英文翻译】**\n### {translation}")
+            st.markdown("**【中文原文】**")
+            st.write(query)
+            
+            st.markdown("**【英文翻译】（点击右上角按钮复制）**")
+            st.code(translation, language=None)  # 右上角自带一键复制按钮
+            
             st.markdown(f"**【对应音标】**\n`{p_text}`")
+            
             tts_word = translation
             save_word = translation
             save_trans = query
@@ -285,7 +294,9 @@ elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
             with st.chat_message("user", avatar="👤"):
                 st.markdown(f"**你**: {msg['text']}")
                 if "suggestion" in msg and msg["suggestion"]:
-                    st.info(f"✨ **地道表达建议**: {msg['suggestion']}\n\n🔊 **建议音标**: `{msg['sug_phonetic']}`")
+                    st.info("✨ **地道表达建议**（可一键复制）：")
+                    st.code(msg["suggestion"], language=None)
+                    st.caption(f"🔊 **建议音标**: `{msg['sug_phonetic']}`")
                     play_audio(msg['suggestion'], key_prefix=f"sug_{idx}")
 
     user_reply = st.chat_input("用英文回答（例如：It was great, I rested at home.）")
@@ -359,6 +370,9 @@ if not st.session_state.vocab_list:
 else:
     for idx, item in enumerate(list(st.session_state.vocab_list)):
         with st.expander(f"📌 {item['word']}"):
+            st.markdown("**【单词/短语】**")
+            st.code(item['word'], language=None)
+            
             st.markdown(f"**【音标】** `{item['phonetic']}`")
             st.write(f"**【释义】** {item['translation']}")
             play_audio(item['word'], key_prefix=f"vocab_{idx}")
