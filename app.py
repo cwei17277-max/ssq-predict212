@@ -6,6 +6,7 @@ import urllib.parse
 import base64
 from io import BytesIO
 from gtts import gTTS
+import html
 
 # 页面配置
 st.set_page_config(
@@ -14,6 +15,65 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed"
 )
+
+# 自定义 CSS 样式：控制紫色英文、红色音标、蓝色复制按钮
+st.markdown("""
+<style>
+/* 紫色英文文本样式 */
+.purple-text {
+    color: #6c5ce7 !important;
+    font-size: 1.25rem !important;
+    font-weight: 600 !important;
+    line-height: 1.5 !important;
+    word-break: break-word;
+}
+
+/* 红色音标文本样式 */
+.red-phonetic {
+    color: #d63031 !important;
+    font-family: monospace, sans-serif !important;
+    font-size: 1.05rem !important;
+    font-weight: 500 !important;
+    word-break: break-word;
+}
+
+/* 蓝色复制按钮样式 */
+.copy-btn-blue {
+    background-color: #0984e3 !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 6px !important;
+    padding: 6px 14px !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease-in-out !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    margin-top: 6px !important;
+    margin-bottom: 8px !important;
+}
+
+.copy-btn-blue:hover {
+    background-color: #0069d9 !important;
+    box-shadow: 0 2px 6px rgba(9, 132, 227, 0.4) !important;
+}
+
+.copy-btn-blue:active {
+    transform: scale(0.98) !important;
+}
+
+/* 自定义卡片容器 */
+.custom-card {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(128, 128, 128, 0.2);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # 初始化 Session 状态
 if "vocab_list" not in st.session_state:
@@ -40,7 +100,6 @@ app_mode = st.selectbox(
 
 # ==================== 核心辅助工具函数 ====================
 
-# 使用服务器端 gTTS 生成二进制音频（Base64 编码直接嵌入 HTML，无需跨域，支持所有手机和浏览器）
 @st.cache_data(show_spinner=False)
 def generate_audio_base64(text):
     if not text or not text.strip():
@@ -53,7 +112,7 @@ def generate_audio_base64(text):
         fp.seek(0)
         b64 = base64.b64encode(fp.read()).decode()
         return f"data:audio/mp3;base64,{b64}"
-    except Exception as e:
+    except Exception:
         return None
 
 def play_audio(text, key_prefix="audio"):
@@ -62,6 +121,28 @@ def play_audio(text, key_prefix="audio"):
         st.audio(audio_data, format="audio/mp3")
     else:
         st.error("语音生成失败，请检查网络连接。")
+
+# 渲染带色彩（紫色英文、红色音标、蓝色复制按钮）的组件
+def render_custom_copy_box(text, label="点击复制", is_purple=True):
+    safe_text = html.escape(text)
+    btn_id = f"btn_{abs(hash(text))}"
+    text_class = "purple-text" if is_purple else ""
+    
+    html_code = f"""
+    <div style="margin-bottom: 8px;">
+        <div class="{text_class}" id="text_{btn_id}">{safe_text}</div>
+        <button class="copy-btn-blue" onclick="
+            navigator.clipboard.writeText(document.getElementById('text_{btn_id}').innerText).then(function() {{
+                var btn = document.getElementById('{btn_id}');
+                btn.innerText = '✅ 已复制！';
+                setTimeout(function() {{ btn.innerText = '📋 {label}'; }}, 2000);
+            }});
+        " id="{btn_id}">
+            📋 {label}
+        </button>
+    </div>
+    """
+    st.markdown(html_code, unsafe_allow_html=True)
 
 # 1. 带缓存机制的单词音标查询
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -141,7 +222,7 @@ def get_translation_and_phonetic(query, langpair="en|zh-CN"):
 
     return phonetic, translation
 
-# 4. 结果渲染与生词卡保存（增加一键复制功能）
+# 4. 结果渲染与生词卡保存
 def display_result_and_save(query, phonetic, translation, is_english_input=True):
     st.markdown("---")
     st.subheader("查词 / 翻译结果")
@@ -151,12 +232,13 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
         
         if is_english_input:
             st.markdown("**【英文原文】**")
-            st.code(query, language=None)  # 右上角自带一键复制按钮
+            render_custom_copy_box(query, label="复制原文", is_purple=True)
             
-            st.markdown(f"**【对应音标】**\n`{p_text}`")
+            st.markdown(f"**【对应音标】**\n<div class='red-phonetic'>{html.escape(p_text)}</div>", unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
             
             st.markdown("**【中文释义】**")
-            st.code(translation, language=None)  # 右上角自带一键复制按钮
+            render_custom_copy_box(translation, label="复制中文释义", is_purple=False)
             
             tts_word = query
             save_word = query
@@ -165,10 +247,11 @@ def display_result_and_save(query, phonetic, translation, is_english_input=True)
             st.markdown("**【中文原文】**")
             st.write(query)
             
-            st.markdown("**【英文翻译】（点击右上角按钮复制）**")
-            st.code(translation, language=None)  # 右上角自带一键复制按钮
+            st.markdown("**【英文翻译】**")
+            render_custom_copy_box(translation, label="复制英文翻译", is_purple=True)
             
-            st.markdown(f"**【对应音标】**\n`{p_text}`")
+            st.markdown(f"**【对应音标】**\n<div class='red-phonetic'>{html.escape(p_text)}</div>", unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
             
             tts_word = translation
             save_word = translation
@@ -286,18 +369,18 @@ elif app_mode == "💬 AI 场景对话演练(一个月口语突破)":
     for idx, msg in enumerate(st.session_state.chat_history):
         if msg["sender"] == "ai":
             with st.chat_message("assistant", avatar="🤖"):
-                st.markdown(f"**{msg['role']}**: {msg['text']}")
-                st.caption(f"🔊 音标: `{msg['phonetic']}`")
+                st.markdown(f"**{msg['role']}**: <span class='purple-text'>{html.escape(msg['text'])}</span>", unsafe_allow_html=True)
+                st.markdown(f"🔊 音标: <span class='red-phonetic'>{html.escape(msg['phonetic'])}</span>", unsafe_allow_html=True)
                 st.caption(f"💡 中文含义: {msg['zh']}")
                 play_audio(msg['text'], key_prefix=f"ai_{idx}")
         else:
             with st.chat_message("user", avatar="👤"):
                 st.markdown(f"**你**: {msg['text']}")
                 if "suggestion" in msg and msg["suggestion"]:
-                    st.info("✨ **地道表达建议**（可一键复制）：")
-                    st.code(msg["suggestion"], language=None)
-                    st.caption(f"🔊 **建议音标**: `{msg['sug_phonetic']}`")
-                    play_audio(msg['suggestion'], key_prefix=f"sug_{idx}")
+                    st.markdown("✨ **地道表达建议**：")
+                    render_custom_copy_box(msg["suggestion"], label="复制地道表达", is_purple=True)
+                    st.markdown(f"🔊 **建议音标**: <span class='red-phonetic'>{html.escape(msg['sug_phonetic'])}</span>", unsafe_allow_html=True)
+                    play_audio(msg["suggestion"], key_prefix=f"sug_{idx}")
 
     user_reply = st.chat_input("用英文回答（例如：It was great, I rested at home.）")
 
@@ -371,9 +454,9 @@ else:
     for idx, item in enumerate(list(st.session_state.vocab_list)):
         with st.expander(f"📌 {item['word']}"):
             st.markdown("**【单词/短语】**")
-            st.code(item['word'], language=None)
+            render_custom_copy_box(item['word'], label="复制词汇", is_purple=True)
             
-            st.markdown(f"**【音标】** `{item['phonetic']}`")
+            st.markdown(f"**【音标】** <span class='red-phonetic'>{html.escape(item['phonetic'])}</span>", unsafe_allow_html=True)
             st.write(f"**【释义】** {item['translation']}")
             play_audio(item['word'], key_prefix=f"vocab_{idx}")
             
